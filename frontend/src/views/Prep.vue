@@ -5,17 +5,28 @@ const tree = ref<any[]>([])
 const data = ref<any>(null)
 const shortages = ref<any[]>([])
 const orders = ref<any[]>([])
+const notice = ref('')
 async function run() {
+  // 只有点这个按钮才按当前订单行现算并落新快照
   data.value = await api('/prep/run?order_id=1', { method: 'POST' })
+  shortages.value = data.value.shortages || []
+  notice.value = ''
+}
+async function loadSnapshot() {
+  // 只读已落下的快照；没有就空着，绝不自动重算
   try {
-    const res = await api('/prep/shortages?order_id=1')
-    shortages.value = res.shortages || []
-  } catch { shortages.value = [] }
+    data.value = await api('/prep/latest?order_id=1')
+    shortages.value = data.value.shortages || []
+  } catch {
+    data.value = null
+    shortages.value = []
+    notice.value = '尚未生成备料单，点击「生成备料单」按当前订单行现算。'
+  }
 }
 onMounted(async () => {
   tree.value = await api('/bom/tree')
   orders.value = await api('/orders')
-  await run()
+  await loadSnapshot()
 })
 </script>
 <template>
@@ -27,6 +38,7 @@ onMounted(async () => {
     </span>
   </div>
   <button class="btn" @click="run">生成备料单</button>
+  <span v-if="notice" class="muted" style="margin-left:0.6rem;font-size:0.8rem">{{ notice }}</span>
   <div class="kp-workbench" style="margin-top:0.85rem">
     <aside class="kp-bom-tree">
       <h2>菜品 / BOM</h2>
@@ -48,6 +60,10 @@ onMounted(async () => {
           </tr>
         </tbody>
       </table>
+    </section>
+    <section class="kp-worksheet" v-else>
+      <h2>备料单</h2>
+      <p class="muted" style="font-size:0.85rem">暂无快照。订单加行不会改动这里，点「生成备料单」才按当前订单行现算。</p>
     </section>
     <aside class="kp-shortage-sticky">
       <h2>⚠ 缺料便利贴</h2>

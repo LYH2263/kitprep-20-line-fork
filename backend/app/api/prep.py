@@ -8,8 +8,11 @@ from app.models.models import BomLine, Ingredient, KitchenOrder, OrderLine, Prep
 from app.services.bom_engine import explode_and_merge, result_to_dict
 router = APIRouter(prefix="/prep", tags=["prep"])
 
+EMPTY_STATS = {"ingredient_count": 0, "shortage_count": 0, "total_shortage_qty": 0}
+
 @router.post("/run")
 def run_prep(order_id: int = 1, db: Session = Depends(get_db)):
+    """唯一会生成备料单的入口：按当前订单行现算并落一条新快照。"""
     order = db.get(KitchenOrder, order_id)
     if not order: raise HTTPException(404, "订单不存在")
     ols = [{"dish_id": l.dish_id, "portions": l.portions}
@@ -24,15 +27,23 @@ def run_prep(order_id: int = 1, db: Session = Depends(get_db)):
     db.add(run); db.commit(); db.refresh(run)
     return {"id": run.id, **result}
 
+def _latest_run(order_id: int, db: Session) -> PrepRun | None:
+    return db.scalars(select(PrepRun).where(PrepRun.order_id == order_id)
+                      .order_by(PrepRun.id.desc())).first()
+
 @router.get("/latest")
 def latest(order_id: int = 1, db: Session = Depends(get_db)):
-    run = db.scalars(select(PrepRun).where(PrepRun.order_id == order_id).order_by(PrepRun.id.desc())).first()
+    """只读已落下的快照；没有快照就 404，绝不偷偷生成。"""
+    run = _latest_run(order_id, db)
     if not run:
-        return run_prep(order_id=order_id, db=db)
-    data = json.loads(run.result_json)
-    return {"id": run.id, **data}
+        raise HTTPException(404, "尚未生成备料单")
+    return {"id": run.id, **json.loads(run.result_json)}
 
 @router.get("/shortages")
 def shortages(order_id: int = 1, db: Session = Depends(get_db)):
-    data = latest(order_id=order_id, db=db)
-    return {"order_id": order_id, "shortages": data.get("shortages", []), "stats": data.get("stats", {})}
+    """缺料贴只读最新快照；没有快照时返回空，不触发重算。"""
+    run = _latest_run(order_id, db)
+    if not run:
+        return {"order_id": order_id, "shortages": [], "stats": dict(EMPTY_STATS)}
+    data = json.loads(run.result_json)
+    return {"order_id": order_id, "shortages": data.get("shortages", []), "stats": data.get("stats", dict(EMPTY_STATS))}
