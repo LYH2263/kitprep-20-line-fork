@@ -8,6 +8,25 @@ from app.models.models import BomLine, Ingredient, KitchenOrder, OrderLine, Prep
 from app.services.bom_engine import explode_and_merge, result_to_dict
 router = APIRouter(prefix="/prep", tags=["prep"])
 
+def _empty_state(order: KitchenOrder) -> dict:
+    return {
+        "id": None,
+        "order": {"id": order.id, "code": order.code, "outlet": order.outlet},
+        "prep_lines": [],
+        "shortages": [],
+        "stats": {"ingredient_count": 0, "shortage_count": 0, "total_shortage_qty": 0},
+    }
+
+def _load_latest(db: Session, order_id: int) -> dict:
+    """读最新已落备料快照；从无快照时返回空态，绝不代跑（GET 零写入）。"""
+    order = db.get(KitchenOrder, order_id)
+    if order is None:
+        raise HTTPException(404, "订单不存在")
+    run = db.scalars(select(PrepRun).where(PrepRun.order_id == order_id).order_by(PrepRun.id.desc())).first()
+    if run is None:
+        return _empty_state(order)
+    return {"id": run.id, **json.loads(run.result_json)}
+
 @router.post("/run")
 def run_prep(order_id: int = 1, db: Session = Depends(get_db)):
     order = db.get(KitchenOrder, order_id)
@@ -26,13 +45,9 @@ def run_prep(order_id: int = 1, db: Session = Depends(get_db)):
 
 @router.get("/latest")
 def latest(order_id: int = 1, db: Session = Depends(get_db)):
-    run = db.scalars(select(PrepRun).where(PrepRun.order_id == order_id).order_by(PrepRun.id.desc())).first()
-    if not run:
-        return run_prep(order_id=order_id, db=db)
-    data = json.loads(run.result_json)
-    return {"id": run.id, **data}
+    return _load_latest(db, order_id)
 
 @router.get("/shortages")
 def shortages(order_id: int = 1, db: Session = Depends(get_db)):
-    data = latest(order_id=order_id, db=db)
+    data = _load_latest(db, order_id)
     return {"order_id": order_id, "shortages": data.get("shortages", []), "stats": data.get("stats", {})}

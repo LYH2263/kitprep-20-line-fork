@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { api } from '../api'
+import { currentOrderId, setCurrentOrderId } from '../orderContext'
 const rows = ref<any[]>([])
 const stats = ref<any>({})
 onMounted(async () => {
-  const res = await api('/prep/shortages?order_id=1')
+  if (currentOrderId.value == null) {
+    const orders = await api<any[]>('/orders')
+    if (orders.length) setCurrentOrderId(orders[0].id)
+  }
+  if (currentOrderId.value == null) return
+  const res = await api('/prep/shortages?order_id=' + currentOrderId.value)
   rows.value = res.shortages; stats.value = res.stats
 })
 </script>
 <template>
   <h1>缺料便利贴</h1>
-  <p class="sub">shortage = need − stock（仅正数）</p>
+  <p class="sub">shortage = need − stock（仅正数）· 取自最近一次已落备料单，加行不会自动重算</p>
   <div class="kp-shortage-sticky" style="max-width:360px;transform:rotate(-1deg);margin-bottom:1rem">
-    <h2>⚠ 缺料 {{ stats.shortage_count }} · 合计 {{ stats.total_shortage_qty }}</h2>
+    <h2>⚠ 缺料 {{ stats.shortage_count ?? 0 }} · 合计 {{ stats.total_shortage_qty ?? 0 }}</h2>
     <div v-for="r in rows" :key="r.ingredient_id" class="kp-shortage-item">
       <span>{{ r.ingredient_name }}</span>
       <span class="kp-qty">−{{ r.shortage }} {{ r.unit }}</span>
